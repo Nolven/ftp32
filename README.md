@@ -1,4 +1,4 @@
-![Version Badge](https://img.shields.io/badge/version-0.8.0_(MVP)-blue)
+![Version Badge](https://img.shields.io/badge/version-0.8.5-blue)
 
 
 # FTP client for esp32

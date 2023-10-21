@@ -1,14 +1,17 @@
 #include <WiFiClient.h>
 #include <stdexcept>
 
-// !@#$ for 0.8.0
+// @@@@@ for 0.9.0
 /** TODO
   * core:
-  * * batch download !@#$
+  * * assing all Error:: to _r_code instead of just returning @@@@@
+  * * add type interpetation for download @@@@@
+  * * templates for download/upload buffer and data @@@@@
+  * * last command @@@@@
   * QoL:
-  * * mktree / rmtree
+  * * mktree / rmtree @@@@@
   * * constructor overloads (std::string, String (arduino))
-  * * defines for throw and log msgs
+  * * defines for throw and log msgs @@@@@
   * optimization:
   * * response reading (msg buffer)
   * * data channel reading
@@ -61,9 +64,12 @@ public:
     BUSY = 3      ///< data transfer is underway / disconnect() on not connected client / connect() on connected client
   };
 
+  /** @enum Status
+    * Represents lib state. Used for multi-batch transactions.
+    **/
   enum Status {
-    DOWNLOADING,
-    UPLOADING,
+    DOWNLOADING, ///< after initDownload successfully executed
+    UPLOADING, ///< after initUpload successfully executed
     IDLE
   };
 
@@ -101,7 +107,7 @@ public:
   uint16_t disconnect() {
     if( !_cClient.connected() ) return Error::BUSY;
 
-    uint16_t res = _sendCmd("QUIT","",221);
+    uint16_t res = _sendCmd("QUIT",221);
     _cClient.stop(); 
 
     return res;
@@ -118,7 +124,7 @@ public:
     * @see CommonReturnValues
     **/
   uint16_t initUpload(const char* destinationFilepath, OpenType t){
-    if( _dClient.connected() ) return Error::BUSY; 
+    if( _dClient.connected() || _status != IDLE ) return Error::BUSY; 
     if( _openDataChn(_dClient) ) return _r_code;
 
     String cmd;
@@ -133,9 +139,11 @@ public:
         return Error::INVARG;
     }
     if( !_sendCmd(cmd.c_str(), destinationFilepath, 150) ){
-      _transmitting = true;
+      _status = UPLOADING;
       return 0;
-    } else { return _r_code; }
+    } else { 
+      return _r_code; 
+    }
   }
 
  /** @brief write data to the prevoulsy initiated upload transaction
@@ -146,7 +154,7 @@ public:
     * @note does nothing if called before initUpload()
     **/
   size_t uploadData(const char* data){
-    if( !_transmitting ) return 0;
+    if( _status != Status::UPLOADING ) return 0;
     return _dClient.write(data);
   }
 
@@ -160,7 +168,7 @@ public:
     * @overload uploadData(const char* data)
     **/
   size_t uploadData(uint8_t* data, size_t size){
-    if( !_transmitting ) return 0;
+    if( _status != Status::UPLOADING ) return 0;
     return _dClient.write(data, size);
   }
 
@@ -170,10 +178,10 @@ public:
     * @note does nothing if called before commencing transmission
     **/
   uint16_t finishUpload(){
-    if( !_transmitting ) return 0;
+    if( _status != Status::UPLOADING ) return 0;
 
     _dClient.stop();
-    _transmitting = false;
+    _status = Status::IDLE;
     return _readResponse() == 226 ? 0 : _r_code;
   }
 
@@ -186,7 +194,7 @@ public:
     * @see CommonReturnValues
     **/
   size_t uploadSingleshot(const char* destinationFilepath, const char* data, OpenType t){
-    if( _transmitting ) return Error::BUSY;
+    if( _status != Status::IDLE ) return Error::BUSY;
     if( initUpload(destinationFilepath, t) || !uploadData(data) || finishUpload() )
       return _r_code;
     else 
@@ -203,7 +211,7 @@ public:
     * @see CommonReturnValues
     **/
   size_t uploadSingleshot(const char* destinationFilepath, uint8_t* data, size_t dataSize, OpenType t){
-    if( _transmitting ) return Error::BUSY;
+    if( _status != Status::IDLE ) return Error::BUSY;
     if( initUpload(destinationFilepath, t) || !uploadData(data, dataSize) || finishUpload() ) 
       return _r_code;
     else
@@ -252,12 +260,13 @@ public:
   /** @brief initiates download transaction from the server
     * 
     * @param[in] filepath path to file
-    * @note transaction is considered finished when downloadData() returns 0
+    * @note transaction is considered finished when downloadData() fullfils (!amount || (amount && read == 0))
     * @see CommonReturnValues
     **/
   uint16_t initDownload(const char* filename){
-    if( _transmitting ) return Error::BUSY;
+    if( _status != Status::IDLE ) return Error::BUSY;
     if( _openDataChn(_dClient) || _sendCmd("RETR", filename, 150) ) return _r_code;
+    _status = Status::DOWNLOADING;
 
     return 0;
   }
@@ -270,7 +279,10 @@ public:
     * @return number of bytes read
     **/
   size_t downloadData(char* dest, size_t amount = 0){
-    return _readData(_dClient, dest, amount);
+    if( _status != Status::DOWNLOADING ) return 0;
+    size_t read = _readData(_dClient, dest, amount);
+    if( !amount || (amount && read == 0) ) _status = Status::IDLE;
+    return read;
   }
 
   /** @brief downloads the entire file from FTP server;
@@ -281,9 +293,8 @@ public:
     * @see CommonReturnValues
     **/
   uint16_t downloadSingleshot(const char* filename, String& dest){
-    uint16_t res;
-    res = initDownload(filename);
-    if( res ) return res;
+    if( _status != IDLE ){ return Error::BUSY; }
+    if( _openDataChn(_dClient) || _sendCmd("RETR", filename, 150) ) return _r_code;
 
     _readData(_dClient, dest);
 
@@ -331,7 +342,7 @@ public:
     * @see CommonReturnValues
     **/
   uint16_t pwd(String& dest){
-    if( _sendCmd("PWD", "", 257) ) return _r_code;
+    if( _sendCmd("PWD", 257) ) return _r_code;
 
     dest =  _r_msg.substring(_r_msg.indexOf('"') + 1,
                             _r_msg.lastIndexOf('"'));
@@ -396,7 +407,7 @@ public:
         return Error::INVARG;
     }
 
-    return _sendCmd(type.c_str(), "", 200);
+    return _sendCmd(type.c_str(), 200);
   }
 
   /** @brief returns the last time the file was modified.
@@ -417,7 +428,7 @@ public:
     * @see CommonReturnValues
     **/
   uint16_t getSystemInfo(String& dest){
-    if( _sendCmd("SYST", "", 215) ) return _r_code;
+    if( _sendCmd("SYST", 215) ) return _r_code;
     dest = _r_msg;
     return 0;
   }
@@ -460,17 +471,24 @@ private:
   /** @brief Send command to FTP server. Checks for connection before sending.
     * @param[in] cmd The command to send.
     * @param[in] arg Command argument.
-    * @param[in] expectedResp The expected response code.
+    * @param[in] expectedResponseCode The expected response code.
     * @see CommonReturnValues
     **/
-  uint16_t _sendCmd(const char* cmd, const char* arg, uint16_t expectedResp){
+  uint16_t _sendCmd(const char* cmd, const char* arg, uint16_t expectedResponseCode){
     if( !_cClient.connected() ) { _r_code = Error::TIMEOUT; return _r_code; }
-    if( !strlen(arg) )
-      _cClient.println(String(cmd));
-    else
-      _cClient.println(String(cmd) + " " + String(arg));  
+    _cClient.println(String(cmd) + " " + String(arg));  
+    return _readResponse() == expectedResponseCode ? 0 : _r_code;
+  }
 
-    return _readResponse() == expectedResp ? 0 : _r_code;
+  /** @brief Send command to FTP server. Checks for connection before sending.
+    * @param[in] cmd The command to send.
+    * @param[in] expectedResponseCode The expected response code.
+    * @see CommonReturnValues
+    **/
+  uint16_t _sendCmd(const char* cmd, uint16_t expectedResponseCode){
+    if( !_cClient.connected() ) { _r_code = Error::TIMEOUT; return _r_code; }
+    _cClient.println(cmd);
+    return _readResponse() == expectedResponseCode ? 0 : _r_code;
   }
 
   /** @brief Parses response data sent in the control channel.
@@ -528,7 +546,12 @@ private:
   }
 
   /** @brief reads data channel until timeout reached | response on control channel received | specified amount read
-    *
+    *     
+    * @tparam T type of input buffer. 
+    * Tested on char*, String, std::string.
+    * For raw pointer buffer, memory should be pre-allocated. 
+    * For String& and std::string& data will be appended char-by-char;
+    * 
     * @param[in] dataC WiFiclient to read
     * @param[out] dest String to append data to
     * @param[in] amount number of bytes to read
@@ -544,9 +567,9 @@ private:
       if( dataC.available() ) {
         add(dest, dataC.read(), read++);
       } else { 
-        if( !dataC.connected() ){
-          if( _r_index > 2 ) { _readResponse(); break; } // respond code was read
-          while( _cClient.available() ){ _readCtrlChar(); };
+        if( !dataC.connected() ){ // either connection got lost or download finished
+          _readResponse();
+          break;
         } 
       }
     }
@@ -561,7 +584,7 @@ private:
     * @see CommonReturnValues
     **/
   uint16_t _openDataChn(WiFiClient& client){
-    if( _sendCmd("PASV","",227) ) return _r_code;
+    if( _sendCmd("PASV", 227) ) return _r_code;
 
     int startPos = _r_msg.indexOf("(");
     int endPos = _r_msg.indexOf(")");
@@ -586,7 +609,7 @@ private:
 private:
   WiFiClient _cClient;
   WiFiClient _dClient;
-  bool _transmitting{};
+  Status _status{Status::IDLE};
 
   uint8_t _msg_buff_size{60};
 
