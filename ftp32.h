@@ -1,3 +1,6 @@
+#ifndef FTP32_H
+#define FTP32_H
+
 #include <WiFiClient.h>
 #include <stdexcept>
 
@@ -6,9 +9,8 @@
   * core:
   * * add type interpetation for download @@@@@
   * * templates for download/upload buffer and data @@@@@
-  * * safeguard
   * QoL:
-  * * mktree / rmtree @@@@@
+  * * rmtree @@@@@
   * * constructor overloads (std::string, String (arduino))
   * * defines for throw and log msgs @@@@@
   * optimization:
@@ -254,7 +256,6 @@ public:
     return 0;
   }
 
-
   // DOWNLOAD
   /** @brief initiates download transaction from the server
     * 
@@ -311,6 +312,40 @@ public:
     **/
   uint16_t mkdir(const char* name){
     return _sendCmd("MKD", name, 257);
+  }
+
+  /**
+    * @brief Create a directory tree.
+    * Creates a directory tree, and if a directory in the provided path already exists, it proceeds to create the rest of the tree.
+    *
+    * @param[in] path The complete tree path. Accepts paths with or without a trailing '/'.
+    *
+    * @see CommonReturnValues
+    **/
+  uint16_t mktree(const char* path) {
+    String p(path);
+    String sub;
+    String listTmp;
+
+    int left{0}; 
+    int right{0};
+
+    if( p.startsWith("/") ) left = 1;
+
+    while( (right = p.indexOf('/', left + 1)) != -1 )
+    {
+      String sub = p.substring(0, right);
+
+      if( listContent(sub.c_str(), ListType::SIMPLE, listTmp) ){ // 550 means that it can't open dir - we assume it doesn't exist
+        if( mkdir(sub.c_str()) ) return _r_code;
+      }
+      left = right;
+    }
+
+    if( p.endsWith("/") ) 
+      return 0;
+    else 
+      return mkdir(path);
   }
 
   /** @brief changes current working dir
@@ -622,3 +657,5 @@ private:
 
   String _sysData;
 };
+
+#endif // FTP32_H
