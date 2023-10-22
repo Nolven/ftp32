@@ -4,10 +4,9 @@
 // @@@@@ for 0.9.0
 /** TODO
   * core:
-  * * assing all Error:: to _r_code instead of just returning @@@@@
   * * add type interpetation for download @@@@@
   * * templates for download/upload buffer and data @@@@@
-  * * last command @@@@@
+  * * safeguard
   * QoL:
   * * mktree / rmtree @@@@@
   * * constructor overloads (std::string, String (arduino))
@@ -281,7 +280,7 @@ public:
   size_t downloadData(char* dest, size_t amount = 0){
     if( _status != Status::DOWNLOADING ) return 0;
     size_t read = _readData(_dClient, dest, amount);
-    if( !amount || (amount && read == 0) ) _status = Status::IDLE;
+    if( !amount || (amount && read == 0) ){ _readResponse(); _status = Status::IDLE; };
     return read;
   }
 
@@ -300,7 +299,6 @@ public:
 
     return _readResponse() == 226 ? 0 : _r_code;
   }
-
   
   // DIR
   /** @brief creates new folder in the current working dir
@@ -545,7 +543,7 @@ private:
     return c; 
   }
 
-  /** @brief reads data channel until timeout reached | response on control channel received | specified amount read
+  /** @brief reads data channel until timeout reached | data client is no longer connected | specified amount read
     *     
     * @tparam T type of input buffer. 
     * Tested on char*, String, std::string.
@@ -567,10 +565,7 @@ private:
       if( dataC.available() ) {
         add(dest, dataC.read(), read++);
       } else { 
-        if( !dataC.connected() ){ // either connection got lost or download finished
-          _readResponse();
-          break;
-        } 
+        if( !dataC.connected() ) break;
       }
     }
 
