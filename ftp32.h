@@ -3,6 +3,7 @@
 
 #include <WiFiClient.h>
 #include <stdexcept>
+#include <esp_timer.h>
 
 // @@@@@ for 0.9.0
 /** TODO
@@ -75,7 +76,7 @@ public:
   };
 
   FTP32(const char* address, uint8_t port = 21) 
-    : _address(address), _port(port), _control_timeout_ms(5000), _data_timeout_ms(_control_timeout_ms * 2){
+    : _address(address), _port(port), _ctrl_timeout_us(5e6), _data_timeout_us(_ctrl_timeout_us * 2){
     }
 
 
@@ -90,7 +91,7 @@ public:
   uint16_t connectWithPassword(const char* username, const char* password) {
     if( _cClient.connected() ) return Error::BUSY;
 
-    if(!_cClient.connect(_address, _port, _control_timeout_ms) 
+    if(!_cClient.connect(_address, _port, _ctrl_timeout_us/1e3) 
       || _readResponse() != 220
       || _sendCmd("USER", username, 331)
       || _sendCmd("PASS", password, 230))
@@ -477,15 +478,15 @@ public:
   /** @brief sets timeout for the data channel in milliseconds.
     *  Usually higher than for control channel
     **/ 
-  void setDataChannelTimeout(uint16_t timeout_ms){
-    _data_timeout_ms = timeout_ms;
+  void setDataChannelTimeout(uint16_t milliseconds){
+    _data_timeout_us = milliseconds * 1e3;
   }
   
   /** @brief sets timeout for the control channel in milliseconds.
     * Usually lower than for data channel
     **/
-  void setControlChannelTimeout(uint16_t timeout_ms){
-    _control_timeout_ms = timeout_ms;
+  void setControlChannelTimeout(uint16_t milliseconds){
+    _ctrl_timeout_us = milliseconds * 1e3;
   }
   
 
@@ -535,47 +536,36 @@ private:
     _r_msg = "";
     _r_code = 0;
 
+    int i{};
+
     // read the response
-    uint32_t startTime = millis();
-    while ((millis() - startTime) < _control_timeout_ms && _r_leftToRead) {
-      if( _cClient.available() )
-      {
-        if( _readCtrlChar() == '\r' ){ break; }
+    int64_t startTime = esp_timer_get_time();
+    while( (esp_timer_get_time() - startTime) < _ctrl_timeout_us && i < _msg_buff_size ){
+      if( _cClient.available() ){
+        char c = _cClient.read();
+        switch( i++ ){ // O stands for oPTimZiaTion
+          case 0: _r_code += (c - '0') * 100; break;
+          case 1: _r_code += (c - '0') * 10; break;
+          case 2: _r_code += (c - '0'); break;
+          case 3: break; // skip trailing space
+          default: // read msg
+          {
+            if( c == '\r' ) { goto exit_loop; }
+            _r_msg += c;
+          }
+        }
       } else {
         if( !_cClient.connected() ){ _r_code = Error::TIMEOUT; break; }
       }
     }
+    exit_loop:;
 
-    _r_index = 0;
-    _r_leftToRead = _msg_buff_size;
-
-    // discard the rest
-    while (_cClient.available()) {
+    // discard the rest TODO
+    while( _cClient.available() ) {
       _cClient.read();
     }
 
     return _r_code;
-  }
-
-  /** @brief reads a single char from control channel
-    * Updates internal buffer for resp code and msg
-    *
-    * @return read character
-    **/
-  char _readCtrlChar(){
-    char c = _cClient.read();
-    switch( _r_index ){ // O stands for oPTimZiaTion
-      case 0: _r_code += (c - '0') * 100; break;
-      case 1: _r_code += (c - '0') * 10; break;
-      case 2: _r_code += (c - '0'); break;
-      case 3: break; // skip trailing space
-      default: // read msg
-        _r_msg += c;
-      --_r_leftToRead;
-    }
-    ++_r_index;
-    
-    return c; 
   }
 
   /** @brief reads data channel until timeout reached | data client is no longer connected | specified amount read
@@ -594,8 +584,8 @@ private:
   template<typename T>
   size_t _readData(WiFiClient& dataC, T& dest, size_t amount = 0){
     size_t read{0};
-    uint32_t startTime = millis();
-    while( (millis() - startTime) < _data_timeout_ms ) {
+    int64_t startTime = esp_timer_get_time();
+    while( (esp_timer_get_time() - startTime) < _data_timeout_us ) {
       if( amount && read == amount ) break;
       if( dataC.available() ) {
         add(dest, dataC.read(), read++);
@@ -629,7 +619,10 @@ private:
       }
     }
 
-    return !client.connect(IPAddress(parts[0], parts[1], parts[2], parts[3]), (parts[4] << 8) | (parts[5] & 255), _control_timeout_ms) ? _r_code : 0;
+    return !client.connect(IPAddress(parts[0], parts[1], parts[2], parts[3]), 
+                                    (parts[4] << 8) | (parts[5] & 255), 
+                                    _ctrl_timeout_us/1e3) 
+                                    ? _r_code : 0;
   }
 
   // overloads for differnt incoming data buffer types
@@ -643,17 +636,17 @@ private:
 
   uint8_t _msg_buff_size{60};
 
-  size_t _r_index{0};
-  size_t _r_leftToRead{_msg_buff_size};
-
   uint16_t _r_code;
   String _r_msg;
 
   const char* _address; 
   const uint8_t _port;
   
-  uint16_t _control_timeout_ms; 
-  uint16_t _data_timeout_ms;
+  // microseconds is too much resolution for user
+  // but millis() is a bit slower and less reliable than esp_timer_get_time()
+  // so set milsec, use microsec
+  int64_t _ctrl_timeout_us;
+  int64_t _data_timeout_us;
 
   String _sysData;
 };
