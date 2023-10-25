@@ -2,7 +2,7 @@
 #define FTP32_H
 
 #include <WiFiClient.h>
-#include <stdexcept>
+#include <stack>
 #include <esp_timer.h>
 
 // @@@@@ for 0.9.0
@@ -11,7 +11,6 @@
   * * add type interpetation for download @@@@@
   * * templates for download/upload buffer and data @@@@@
   * QoL:
-  * * rmtree @@@@@
   * * constructor overloads (std::string, String (arduino))
   * * defines for throw and log msgs @@@@@
   * optimization:
@@ -97,8 +96,7 @@ public:
       || _sendCmd("PASS", password, 230))
     {
       return _r_code;   
-    } else
-    {
+    } else {
       return 0;
     }
   }
@@ -315,8 +313,7 @@ public:
     return _sendCmd("MKD", name, 257);
   }
 
-  /**
-    * @brief Create a directory tree.
+  /** @brief Create a directory tree.
     * Creates a directory tree, and if a directory in the provided path already exists, it proceeds to create the rest of the tree.
     *
     * @param[in] path The complete tree path. Accepts paths with or without a trailing '/'.
@@ -367,6 +364,67 @@ public:
     **/
   uint16_t rmdir(const char* name){
     return _sendCmd("RMD", name, 250);
+  }
+
+  /** @brief removes tree of directories regardless its content.
+  * 
+  * @param[in] path path to trees root
+  * @note if "/" is provided as param, deletes all files, except the "/" itself
+  * 
+  * @see CommonReturnValues
+  **/
+  uint16_t rmtree(const char* rootPath) {
+
+    std::stack<String> dirStack;
+    String dirContent;
+    String entry;
+    String fullEntryPath;
+    String currentDir(rootPath);
+    
+    if( currentDir[currentDir.length() - 1] == '/' )
+      dirStack.emplace(currentDir.substring(0, currentDir.length() - 1));
+    else
+      dirStack.emplace(currentDir);
+      
+    while( !dirStack.empty() ) {
+      currentDir = dirStack.top();
+      
+      dirContent = "";
+      if( listContent(currentDir.c_str(), ListType::MACHINE, dirContent) ) return _r_code;
+
+      if( dirContent.isEmpty() ){ // if top empty
+        if( dirStack.size() == 1 && currentDir == "/" ) return 0; // prever / from being deleted
+        rmdir(currentDir.c_str());
+        dirStack.pop();
+        continue;
+      }
+
+      int startPos{};
+      int endPos{};
+      bool containDir{false};
+
+      while (startPos < dirContent.length()) {
+        endPos = dirContent.indexOf('\r', startPos); // each entry is followed by /r/n
+        entry = dirContent.substring(startPos, endPos);
+        fullEntryPath = currentDir + '/' + entry.substring(entry.indexOf(' ') + 1, endPos);
+
+        startPos = endPos + 2; // +r+n
+
+        if( entry.substring(entry.indexOf('=') + 1, entry.indexOf(';')) == "dir" ) {
+          dirStack.push(fullEntryPath);
+          containDir = true;
+        } else {
+          if( deleteFile(fullEntryPath.c_str()) ) return _r_code;
+        }
+      }
+
+      if( !containDir ){  // if newly checked dir is empty
+        if( rmdir(currentDir.c_str()) ) return _r_code;
+        dirStack.pop();
+      }
+    }
+
+    return 0;
   }
 
   /** @brief retrieves current working directory
