@@ -1,6 +1,25 @@
 #ifndef FTP32_H
 #define FTP32_H
 
+// the idea is to log_info the start of each operation
+// and log_error only inside of _sendCmd method
+
+// #define FTP32_LOG LOG_LEVEL_INFO             // TO SET DESIRED LOG_LVL
+#define FTP32_LOG_FATAL 1 ///< if work continuation is impossible (mostly when control channel is disconnected)
+#define FTP32_LOG_ERROR 2 ///< all cases when expected response code doesn't match
+#define FTP32_LOG_INFO 3
+
+#ifdef FTP32_LOG
+#define FTP32_FATAL(...) if (FTP32_LOG >= FTP32_LOG_FATAL) { Serial.printf("[FTP32::FATAL] "); Serial.printf(__VA_ARGS__); Serial.println();} 
+#define FTP32_ERROR(...) if (FTP32_LOG >= FTP32_LOG_ERROR) { Serial.printf("[FTP32::ERROR] "); Serial.printf(__VA_ARGS__); Serial.println();} 
+#define FTP32_INFO(...)  if (FTP32_LOG >= FTP32_LOG_INFO) { Serial.printf("[FTP32::INFO] "); Serial.printf(__VA_ARGS__); Serial.println();} 
+#else
+#define FTP32_FATAL(...)
+#define FTP32_ERROR(...)
+#define FTP32_INFO(...)
+#endif
+
+
 #include <WiFiClient.h>
 #include <stack>
 #include <esp_timer.h>
@@ -12,7 +31,6 @@
   * * templates for download/upload buffer and data @@@@@
   * QoL:
   * * constructor overloads (std::string, String (arduino))
-  * * defines for throw and log msgs @@@@@
   * optimization:
   * * response reading (msg buffer)
   * * data channel reading
@@ -89,14 +107,16 @@ public:
     **/
   uint16_t connectWithPassword(const char* username, const char* password) {
     if( _cClient.connected() ) return Error::BUSY;
-
+    FTP32_INFO("connecting as %s", username);
     if(!_cClient.connect(_address, _port, _ctrl_timeout_us/1e3) 
       || _readResponse() != 220
       || _sendCmd("USER", username, 331)
       || _sendCmd("PASS", password, 230))
     {
+      FTP32_FATAL("connection failed %d %s", _r_code, _r_msg.c_str());
       return _r_code;   
     } else {
+      FTP32_INFO("connected");
       return 0;
     }
   }
@@ -107,8 +127,9 @@ public:
   uint16_t disconnect() {
     if( !_cClient.connected() ) return Error::BUSY;
 
-    uint16_t res = _sendCmd("QUIT",221);
+    uint16_t res = _sendCmd("QUIT", 221);
     _cClient.stop(); 
+    FTP32_INFO("disconnected");
 
     return res;
   }
@@ -124,8 +145,10 @@ public:
     * @see CommonReturnValues
     **/
   uint16_t initUpload(const char* destinationFilepath, OpenType t){
-    if( _dClient.connected() || _status != IDLE ) return Error::BUSY; 
-    if( _openDataChn(_dClient) ) return _r_code;
+    if( _dClient.connected() || _status != IDLE ){ return Error::BUSY; }
+
+    FTP32_INFO("initiating upload of %s", destinationFilepath);
+    if( _openDataChn(_dClient) ){ return _r_code; }
 
     String cmd;
     switch(t){
@@ -155,7 +178,11 @@ public:
     **/
   size_t uploadData(const char* data){
     if( _status != Status::UPLOADING ) return 0;
-    return _dClient.write(data);
+
+    auto written = _dClient.write(data);
+    FTP32_INFO("%d written", written);
+
+    return written;
   }
 
   /** @brief write data to the previously opened file
@@ -169,7 +196,11 @@ public:
     **/
   size_t uploadData(uint8_t* data, size_t size){
     if( _status != Status::UPLOADING ) return 0;
-    return _dClient.write(data, size);
+
+    auto written = _dClient.write(data, size);
+    FTP32_INFO("%d written", written);
+
+    return written;
   }
 
   /** @brief finishes the upload transaction
@@ -182,6 +213,8 @@ public:
 
     _dClient.stop();
     _status = Status::IDLE;
+    FTP32_INFO("upload fiished");
+
     return _readResponse() == 226 ? 0 : _r_code;
   }
 
@@ -195,10 +228,11 @@ public:
     **/
   size_t uploadSingleshot(const char* destinationFilepath, const char* data, OpenType t){
     if( _status != Status::IDLE ) return Error::BUSY;
-    if( initUpload(destinationFilepath, t) || !uploadData(data) || finishUpload() )
+    if( initUpload(destinationFilepath, t) || !uploadData(data) || finishUpload() ){
       return _r_code;
-    else 
+    } else {
       return 0;
+    }
   }
 
   /** @brief uploads file in a single transaction
@@ -212,10 +246,11 @@ public:
     **/
   size_t uploadSingleshot(const char* destinationFilepath, uint8_t* data, size_t dataSize, OpenType t){
     if( _status != Status::IDLE ) return Error::BUSY;
-    if( initUpload(destinationFilepath, t) || !uploadData(data, dataSize) || finishUpload() ) 
+    if( initUpload(destinationFilepath, t) || !uploadData(data, dataSize) || finishUpload() ){
       return _r_code;
-    else
+    } else {
       return 0;
+    }
   }
 
 
@@ -228,8 +263,8 @@ public:
     * @see CommonReturnValues
     **/
   uint16_t renameFile(const char* from, const char* to){
-    if( _sendCmd("RNFR", from, 350) ) return _r_code;
-    return _sendCmd("RNTO", to, 250);
+    FTP32_INFO("renaming %s to %to", from, to);
+    if( _sendCmd("RNFR", from, 350) || _sendCmd("RNTO", to, 250) ) return _r_code;
   }
 
    /** @brief deletes file
@@ -239,6 +274,7 @@ public:
     * @see CommonReturnValues
     **/
   uint16_t deleteFile(const char* filename){
+    FTP32_INFO("deleting %s", filename);
     return _sendCmd("DELE", filename, 250);
   }
 
@@ -250,6 +286,7 @@ public:
     * @see CommonReturnValues
     **/
   uint16_t fileSize(const char* filepath, size_t& dest){
+    FTP32_INFO("getting size of %s", filepath);
     if( _sendCmd("SIZE", filepath, 213) ) return _r_code;
     dest = strtoul(_r_msg.c_str(), nullptr, 0);
     return 0;
@@ -264,10 +301,14 @@ public:
     **/
   uint16_t initDownload(const char* filename){
     if( _status != Status::IDLE ) return Error::BUSY;
-    if( _openDataChn(_dClient) || _sendCmd("RETR", filename, 150) ) return _r_code;
-    _status = Status::DOWNLOADING;
+    FTP32_INFO("initiating download of %s", filename);
 
-    return 0;
+    if( _openDataChn(_dClient) || _sendCmd("RETR", filename, 150) ){
+      return _r_code;
+    } else {
+      _status = Status::DOWNLOADING;
+      return 0;
+    } 
   }
 
   /** @brief dowloads data from FTP server
@@ -280,7 +321,12 @@ public:
   size_t downloadData(char* dest, size_t amount = 0){
     if( _status != Status::DOWNLOADING ) return 0;
     size_t read = _readData(_dClient, dest, amount);
-    if( !amount || (amount && read == 0) ){ _readResponse(); _status = Status::IDLE; };
+    FTP32_INFO("%d downloaded", read);
+    if( !amount || (amount && read == 0) ){
+      FTP32_INFO("download is finished");
+      _readResponse(); 
+      _status = Status::IDLE; 
+    };
     return read;
   }
 
@@ -310,6 +356,7 @@ public:
     * @see CommonReturnValues
     **/
   uint16_t mkdir(const char* name){
+    FTP32_INFO("making dir %s", name);
     return _sendCmd("MKD", name, 257);
   }
 
@@ -335,7 +382,7 @@ public:
       String sub = p.substring(0, right);
 
       if( listContent(sub.c_str(), ListType::SIMPLE, listTmp) ){ // 550 means that it can't open dir - we assume it doesn't exist
-        if( mkdir(sub.c_str()) ) return _r_code;
+        if( mkdir(sub.c_str()) ){ return _r_code; } 
       }
       left = right;
     }
@@ -353,6 +400,7 @@ public:
     * @see CommonReturnValues
     **/
   uint16_t changeDir(const char* path){
+    FTP32_INFO("changing cwd to %s", path);
     return _sendCmd("CWD", path, 250);
   }
 
@@ -363,6 +411,7 @@ public:
     * @see CommonReturnValues
     **/
   uint16_t rmdir(const char* name){
+    FTP32_INFO("removing %s", name);
     return _sendCmd("RMD", name, 250);
   }
 
@@ -370,11 +419,11 @@ public:
   * 
   * @param[in] path path to trees root
   * @note if "/" is provided as param, deletes all files, except the "/" itself
-  * 
+  * @note on INFO log lvl, it might spam a lot
   * @see CommonReturnValues
   **/
   uint16_t rmtree(const char* rootPath) {
-
+    FTP32_INFO("removing tree %s", rootPath);
     std::stack<String> dirStack;
     String dirContent;
     String entry;
@@ -388,13 +437,14 @@ public:
       
     while( !dirStack.empty() ) {
       currentDir = dirStack.top();
-      
+      if( currentDir.isEmpty() ){ dirStack.pop(); continue; } // some corner case
+
       dirContent = "";
       if( listContent(currentDir.c_str(), ListType::MACHINE, dirContent) ) return _r_code;
 
       if( dirContent.isEmpty() ){ // if top empty
         if( dirStack.size() == 1 && currentDir == "/" ) return 0; // prever / from being deleted
-        rmdir(currentDir.c_str());
+        if( rmdir(currentDir.c_str()) ){ return _r_code; }
         dirStack.pop();
         continue;
       }
@@ -414,12 +464,12 @@ public:
           dirStack.push(fullEntryPath);
           containDir = true;
         } else {
-          if( deleteFile(fullEntryPath.c_str()) ) return _r_code;
+          if( deleteFile(fullEntryPath.c_str()) ){ return _r_code; } 
         }
       }
 
       if( !containDir ){  // if newly checked dir is empty
-        if( rmdir(currentDir.c_str()) ) return _r_code;
+        if( rmdir(currentDir.c_str()) ){ return _r_code; }
         dirStack.pop();
       }
     }
@@ -434,6 +484,7 @@ public:
     * @see CommonReturnValues
     **/
   uint16_t pwd(String& dest){
+    FTP32_INFO("getting current dir");
     if( _sendCmd("PWD", 257) ) return _r_code;
 
     dest =  _r_msg.substring(_r_msg.indexOf('"') + 1,
@@ -453,6 +504,7 @@ public:
     * @see CommonReturnValues
     **/
   uint16_t listContent(const char* dir, ListType t, String& dest){
+    FTP32_INFO("getting content of %s", dir);
     String cmd;
     switch(t){
       case ListType::HUMAN:
@@ -491,9 +543,11 @@ public:
     switch(t){
       case TransferType::BINARY:
         type = "TYPE I";
+        FTP32_INFO("setting transfer type to binary");
         break;
       case TransferType::ASCII:
         type = "TYPE A";
+        FTP32_INFO("setting transfer type to ascii");
         break;
       default:
         return Error::INVARG;
@@ -510,6 +564,7 @@ public:
     * @see CommonReturnValues
     **/
   uint16_t getLastModificationDate(const char* filename, String& date){
+    FTP32_INFO("getting last modification date of %s", filename);
     return _sendCmd("MDTM", filename, 213);
   }
 
@@ -520,6 +575,7 @@ public:
     * @see CommonReturnValues
     **/
   uint16_t getSystemInfo(String& dest){
+    FTP32_INFO("getting system info");
     if( _sendCmd("SYST", 215) ) return _r_code;
     dest = _r_msg;
     return 0;
@@ -568,8 +624,15 @@ private:
     **/
   uint16_t _sendCmd(const char* cmd, const char* arg, uint16_t expectedResponseCode){
     if( !_cClient.connected() ) { _r_code = Error::TIMEOUT; return _r_code; }
+
     _cClient.println(String(cmd) + " " + String(arg));  
-    return _readResponse() == expectedResponseCode ? 0 : _r_code;
+
+    if( _readResponse() == expectedResponseCode ){
+      return 0;
+    } else {
+      FTP32_ERROR("%s %s FAILED %d %s", cmd, arg, _r_code, _r_msg.c_str());
+      return _r_code;
+    }
   }
 
   /** @brief Send command to FTP server. Checks for connection before sending.
@@ -579,8 +642,15 @@ private:
     **/
   uint16_t _sendCmd(const char* cmd, uint16_t expectedResponseCode){
     if( !_cClient.connected() ) { _r_code = Error::TIMEOUT; return _r_code; }
+   
     _cClient.println(cmd);
-    return _readResponse() == expectedResponseCode ? 0 : _r_code;
+
+    if( _readResponse() == expectedResponseCode ){
+      return 0;
+    } else {
+      FTP32_ERROR("%s FAILED %d %s", cmd, _r_code, _r_msg.c_str());
+      return _r_code;
+    }
   }
 
   /** @brief Parses response data sent in the control channel.
@@ -677,10 +747,13 @@ private:
       }
     }
 
-    return !client.connect(IPAddress(parts[0], parts[1], parts[2], parts[3]), 
-                                    (parts[4] << 8) | (parts[5] & 255), 
-                                    _ctrl_timeout_us/1e3) 
-                                    ? _r_code : 0;
+    if( !client.connect(IPAddress(parts[0], parts[1], parts[2], parts[3]), (parts[4] << 8) | (parts[5] & 255), _ctrl_timeout_us/1e3) ){
+      FTP32_ERROR("data connection cannot be established");
+      return _r_code;
+    } else {
+      FTP32_INFO("data connection established");
+      return 0;
+    }
   }
 
   // overloads for differnt incoming data buffer types

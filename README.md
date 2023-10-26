@@ -1,4 +1,4 @@
-![Version Badge](https://img.shields.io/badge/version-0.8.5-blue)
+![Version Badge](https://img.shields.io/badge/version-0.8.7-blue)
 
 
 # FTP client for esp32
@@ -7,12 +7,19 @@ Initially developed for video/pic transmission from esp32-cam.
 Inspired by ldabs [ESP32_FTPClient](https://github.com/ldab/ESP32_FTPClient)
 
 ## Main ideas
-* No serial. Library won't print a thing
-* Success of each operation can be monitored through return code 
-* Documented and simplified for those unfamiliar with FTP
+* Controllable logging (FATAL, ERROR and INFO levels);
+* Success of each operation can be monitored through return code;
+* Documented and simplified for those unfamiliar with FTP;
 
 ## Getting started
 ```c++
+  // by default the library will stay silent
+  // but if you want to have some output
+  // set FTP32_LOG to FTP32_LOG_[...] [INFO], [ERROR], [FATAL] 
+  // (it should be set before #include)
+  #define FTP32_LOG FTP32_LOG_ERROR
+  #include "FTP32/ftp32.h"
+
   // create object and connect to your server
   FTP32 ftp{"127.0.0.1", 21};
 
