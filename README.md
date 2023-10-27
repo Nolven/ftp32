@@ -1,4 +1,4 @@
-![Version Badge](https://img.shields.io/badge/version-0.8.7-blue)
+![Version Badge](https://img.shields.io/badge/version-0.9-cyan)
 
 
 # FTP client for esp32
@@ -69,13 +69,12 @@ Inspired by ldabs [ESP32_FTPClient](https://github.com/ldab/ESP32_FTPClient)
   // by this point, the entire file is loaded
 ```
 
-### Roadmap
-#### Open a new issue if you want something to be implemented
-#### Some points can be found in header file
-* QoL improvments
+## Roadmap
+#### The lib was developed for the personal project, so if you want something to be add - open issue tickets.
+### 1.0.0
 * Arduino listing
 * Examples (test function to check all methods)
+* All method testing function
+* Contribute how-to
+### Sometime later
 * SSL layer
-
-### Dependencies
-* arduino-esp32

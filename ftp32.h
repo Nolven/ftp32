@@ -24,25 +24,6 @@
 #include <stack>
 #include <esp_timer.h>
 
-// @@@@@ for 0.9.0
-/** TODO
-  * core:
-  * * add type interpetation for download @@@@@
-  * * templates for download/upload buffer and data @@@@@
-  * QoL:
-  * * constructor overloads (std::string, String (arduino))
-  * optimization:
-  * * response reading (msg buffer)
-  * * data channel reading
-  * * send
-  * revise:
-  **/
-
-
-// ======================================================
-
-
-
 /** @name Abbreviations
   * - CWD Current Working Dir
   * - DOSI Depends On Server Implementation
@@ -345,6 +326,22 @@ public:
 
     return _readResponse() == 226 ? 0 : _r_code;
   }
+
+  /** @brief downloads the entire file from FTP server;
+    * 
+    * @param[in] filepath file to download
+    * @param[out] dest place to load file content to
+    * @note memory should be pre-allocated
+    * @see CommonReturnValues
+    **/
+  uint16_t downloadSingleshot(const char* filename, char* dest){
+    if( _status != IDLE ){ return Error::BUSY; }
+    if( _openDataChn(_dClient) || _sendCmd("RETR", filename, 150) ) return _r_code;
+
+    _readData(_dClient, dest);
+
+    return _readResponse() == 226 ? 0 : _r_code;
+  }
   
   // DIR
   /** @brief creates new folder in the current working dir
@@ -582,7 +579,9 @@ public:
   }
 
   // LIB CONFIG
-  /** @brief sets the incoming control channel buffer max size
+  /** @brief sets the incoming control channel buffer max size.
+    * @note some data like file size or data connectio address 
+    * is returned through the control channel, so don't set it to 0; (and i didn't implement protection from you (: )
     * Calling this method won't affected data currently stored in input buffer.
     **/
   void setMaxInBufferSize(uint16_t size){
@@ -668,7 +667,7 @@ private:
 
     // read the response
     int64_t startTime = esp_timer_get_time();
-    while( (esp_timer_get_time() - startTime) < _ctrl_timeout_us && i < _msg_buff_size ){
+    while( (esp_timer_get_time() - startTime) < _ctrl_timeout_us ){
       if( _cClient.available() ){
         char c = _cClient.read();
         switch( i++ ){ // O stands for oPTimZiaTion
@@ -678,7 +677,7 @@ private:
           case 3: break; // skip trailing space
           default: // read msg
           {
-            if( c == '\r' ) { goto exit_loop; }
+            if( c == '\r' || i == _msg_buff_size ) { goto exit_loop; }
             _r_msg += c;
           }
         }
@@ -759,6 +758,7 @@ private:
   // overloads for differnt incoming data buffer types
   void add(String& str, char c, size_t pos){ str += c; }
   void add(char* str, char c, size_t pos){ str[pos] = c; }
+  void add(std::string& str, char c, size_t pos){ str += c; }
 
 private:
   WiFiClient _cClient;
@@ -778,8 +778,6 @@ private:
   // so set milsec, use microsec
   int64_t _ctrl_timeout_us;
   int64_t _data_timeout_us;
-
-  String _sysData;
 };
 
 #endif // FTP32_H
