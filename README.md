@@ -6,12 +6,13 @@ Header-only FTP client library.
 Initially developed for video/pic transmission from esp32-cam.  
 Inspired by ldabs [ESP32_FTPClient](https://github.com/ldab/ESP32_FTPClient)
 
-## Main ideas
+# Main ideas
 * Controllable logging (FATAL, ERROR and INFO levels);
 * Success of each operation can be monitored through return code;
 * Documented and simplified for those unfamiliar with FTP;
+* Why header only? I don't remember
 
-## Getting started
+# Getting started
 ```c++
   // by default the library will stay silent
   // but if you want to have some output
@@ -19,6 +20,8 @@ Inspired by ldabs [ESP32_FTPClient](https://github.com/ldab/ESP32_FTPClient)
   // (it should be set before #include)
   #define FTP32_LOG FTP32_LOG_ERROR
   #include "FTP32/ftp32.h"
+
+  // assume WiFiClient already started
 
   // create object and connect to your server
   FTP32 ftp{"127.0.0.1", 21};
@@ -68,13 +71,11 @@ Inspired by ldabs [ESP32_FTPClient](https://github.com/ldab/ESP32_FTPClient)
 
   // by this point, the entire file is loaded
 ```
-
+# Contributing 
+* If you want something implemented, open new issue ticket
+* If you want to expand the lib, before and after adding new functionality execute `teset_all(...)` function and update it according to changes.
 ## Roadmap
-#### The lib was developed for the personal project, so if you want something to be add - open issue tickets.
 ### 1.0.0
 * Arduino listing
-* Examples (test function to check all methods)
-* All method testing function
-* Contribute how-to
 ### Sometime later
 * SSL layer

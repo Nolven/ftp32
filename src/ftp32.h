@@ -244,7 +244,7 @@ public:
     * @see CommonReturnValues
     **/
   uint16_t renameFile(const char* from, const char* to){
-    FTP32_INFO("renaming %s to %to", from, to);
+    FTP32_INFO("renaming %s to %s", from, to);
     if( _sendCmd("RNFR", from, 350) || _sendCmd("RNTO", to, 250) ) return _r_code;
   }
 
@@ -320,6 +320,8 @@ public:
     **/
   uint16_t downloadSingleshot(const char* filename, String& dest){
     if( _status != IDLE ){ return Error::BUSY; }
+
+    FTP32_INFO("downloading %s", filename);
     if( _openDataChn(_dClient) || _sendCmd("RETR", filename, 150) ) return _r_code;
 
     _readData(_dClient, dest);
@@ -336,6 +338,8 @@ public:
     **/
   uint16_t downloadSingleshot(const char* filename, char* dest){
     if( _status != IDLE ){ return Error::BUSY; }
+
+    FTP32_INFO("downloading %s", filename);
     if( _openDataChn(_dClient) || _sendCmd("RETR", filename, 150) ) return _r_code;
 
     _readData(_dClient, dest);
@@ -367,27 +371,33 @@ public:
   uint16_t mktree(const char* path) {
     String p(path);
     String sub;
-    String listTmp;
+    String pathContentBuff;
+
+    String existingPath;
 
     int left{0}; 
     int right{0};
 
-    if( p.startsWith("/") ) left = 1;
-
-    while( (right = p.indexOf('/', left + 1)) != -1 )
-    {
-      String sub = p.substring(0, right);
-
-      if( listContent(sub.c_str(), ListType::SIMPLE, listTmp) ){ // 550 means that it can't open dir - we assume it doesn't exist
-        if( mkdir(sub.c_str()) ){ return _r_code; } 
-      }
-      left = right;
+    if( p.startsWith("/") ){
+      existingPath = "/";
+      left = 1;
+    } else {
+      existingPath = "./";
     }
 
-    if( p.endsWith("/") ) 
-      return 0;
-    else 
-      return mkdir(path);
+    while( existingPath != p ){
+      if( listContent(existingPath.c_str(), ListType::SIMPLE, pathContentBuff) ) return _r_code;
+
+      right = p.indexOf('/', left);
+      String nextToAdd = p.substring(left, right);
+      left = right + 1; // skip /
+      existingPath += nextToAdd;
+      if( right != -1 ) existingPath += "/";
+      if( pathContentBuff.indexOf(existingPath) != -1 ) continue;
+      if( mkdir(existingPath.c_str()) ) return _r_code;     
+    }
+
+    return 0;
   }
 
   /** @brief changes current working dir
